@@ -1,0 +1,6 @@
+{
+  "name": "Manguys",
+  "description": "Un registre pour la sauvegarde du niveau de lecture des mangas, animés, séries, etc. avec un stockage hors ligne.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
