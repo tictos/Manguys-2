@@ -1,11 +1,15 @@
 package com.example.ui.theme
 
+import android.app.Activity
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 enum class AppTheme(
     val id: String,
@@ -137,8 +141,24 @@ fun MyApplicationTheme(
     appTheme: AppTheme = AppTheme.SOPHISTICATED_DARK,
     content: @Composable () -> Unit,
 ) {
+    val colorScheme = getAppColorScheme(appTheme)
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val isDark = appTheme != AppTheme.LIGHT_MINIMAL
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                // isAppearanceLightStatusBars = true means dark icons for light background
+                // isAppearanceLightStatusBars = false means white/light icons for dark background
+                insetsController.isAppearanceLightStatusBars = !isDark
+                insetsController.isAppearanceLightNavigationBars = !isDark
+            }
+        }
+    }
+
     MaterialTheme(
-        colorScheme = getAppColorScheme(appTheme),
+        colorScheme = colorScheme,
         typography = Typography,
         content = content
     )

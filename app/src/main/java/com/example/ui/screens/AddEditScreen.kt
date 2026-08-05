@@ -48,7 +48,14 @@ import com.example.data.MediaEntry
 import com.example.data.MediaStatus
 import com.example.data.MediaType
 import com.example.ui.MediaViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 data class WebImageSuggestion(
     val title: String,
@@ -64,10 +71,75 @@ val PRESET_IMAGE_SUGGESTIONS = listOf(
     WebImageSuggestion("Attack on Titan", "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop", MediaType.ANIMES),
     WebImageSuggestion("Naruto", "https://images.unsplash.com/photo-1613376023733-0a73315d9b06?w=600&auto=format&fit=crop", MediaType.MANGAS),
     WebImageSuggestion("Cyberpunk", "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop", MediaType.SERIES),
-    WebImageSuggestion("Cinema Epic", "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop", MediaType.FILMS),
-    WebImageSuggestion("Sci-Fi Universe", "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop", MediaType.SERIES),
-    WebImageSuggestion("Fantasy World", "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop", MediaType.WEBTOONS)
+    WebImageSuggestion("Cinema Epic", "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&auto=format&fit=crop", MediaType.FILMS)
 )
+
+suspend fun fetchWebImageSuggestions(searchTitle: String, mediaType: MediaType): List<WebImageSuggestion> = withContext(Dispatchers.IO) {
+    val results = mutableListOf<WebImageSuggestion>()
+    if (searchTitle.isBlank()) return@withContext results
+
+    val client = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+
+    val userAgent = "Mozilla/5.0 (Android; Mobile; rv:120.0) Gecko/120.0"
+
+    val categoriesToSearch = when (mediaType) {
+        MediaType.MANGAS, MediaType.WEBTOONS -> listOf("manga", "anime")
+        else -> listOf("anime", "manga")
+    }
+
+    for (category in categoriesToSearch) {
+        try {
+            val encodedQuery = URLEncoder.encode(searchTitle.trim(), "UTF-8")
+            val url = "https://kitsu.io/api/edge/$category?filter[text]=$encodedQuery&page[limit]=8"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", userAgent)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string()
+                    if (!bodyStr.isNullOrEmpty()) {
+                        val json = JSONObject(bodyStr)
+                        val dataArray = json.optJSONArray("data")
+                        if (dataArray != null) {
+                            for (i in 0 until dataArray.length()) {
+                                val item = dataArray.getJSONObject(i)
+                                val attributes = item.optJSONObject("attributes") ?: continue
+                                val canonicalTitle = attributes.optString("canonicalTitle", searchTitle)
+                                val posterObj = attributes.optJSONObject("posterImage") ?: continue
+
+                                val imageUrl = posterObj.optString("medium", "")
+                                    .ifBlank { posterObj.optString("large", "") }
+                                    .ifBlank { posterObj.optString("original", "") }
+
+                                if (imageUrl.isNotBlank()) {
+                                    results.add(
+                                        WebImageSuggestion(
+                                            title = canonicalTitle,
+                                            imageUrl = imageUrl,
+                                            type = mediaType
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore single network call errors
+        }
+
+        if (results.isNotEmpty()) break
+    }
+
+    return@withContext results.distinctBy { it.imageUrl }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +173,18 @@ fun AddEditScreen(
     var showUrlInputDialog by remember { mutableStateOf(false) }
     var customUrlInput by remember { mutableStateOf("") }
     var showSuggestionsSheet by remember { mutableStateOf(false) }
+    var isSearchingImages by remember { mutableStateOf(false) }
+    var fetchedSuggestions by remember { mutableStateOf<List<WebImageSuggestion>>(emptyList()) }
+
+    val isTitleEntered = title.trim().isNotBlank()
+
+    LaunchedEffect(showSuggestionsSheet, title, selectedType) {
+        if (showSuggestionsSheet && title.trim().isNotBlank()) {
+            isSearchingImages = true
+            fetchedSuggestions = fetchWebImageSuggestions(title, selectedType)
+            isSearchingImages = false
+        }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -256,7 +340,12 @@ fun AddEditScreen(
                 }
 
                 OutlinedButton(
-                    onClick = { showSuggestionsSheet = true },
+                    onClick = {
+                        if (isTitleEntered) {
+                            showSuggestionsSheet = true
+                        }
+                    },
+                    enabled = isTitleEntered,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(vertical = 8.dp, horizontal = 8.dp)
                 ) {
@@ -614,7 +703,7 @@ fun AddEditScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Images suggérées du web")
+                    Text("Affiches pour « ${title.trim()} »")
                 }
             },
             text = {
@@ -622,50 +711,78 @@ fun AddEditScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        "Sélectionnez une affiche d'illustration pour votre média :",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (isSearchingImages) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                "Recherche d'images sur internet pour « ${title.trim()} »...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        val suggestionsToDisplay = if (fetchedSuggestions.isNotEmpty()) {
+                            fetchedSuggestions
+                        } else {
+                            PRESET_IMAGE_SUGGESTIONS
+                        }
 
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                    ) {
-                        items(PRESET_IMAGE_SUGGESTIONS) { suggestion ->
-                            Card(
-                                modifier = Modifier
-                                    .width(110.dp)
-                                    .height(150.dp)
-                                    .clickable {
-                                        imageUrl = suggestion.imageUrl
-                                        showSuggestionsSheet = false
-                                    },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    AsyncImage(
-                                        model = suggestion.imageUrl,
-                                        contentDescription = suggestion.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .align(Alignment.BottomCenter)
-                                            .background(Color.Black.copy(alpha = 0.75f))
-                                            .padding(6.dp)
-                                    ) {
-                                        Text(
-                                            text = suggestion.title,
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                        Text(
+                            text = if (fetchedSuggestions.isNotEmpty()) {
+                                "Sélectionnez une affiche officielle trouvée sur internet :"
+                            } else {
+                                "Aucune image spécifique trouvée. Choisissez parmi les suggestions :"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            items(suggestionsToDisplay) { suggestion ->
+                                Card(
+                                    modifier = Modifier
+                                        .width(110.dp)
+                                        .height(150.dp)
+                                        .clickable {
+                                            imageUrl = suggestion.imageUrl
+                                            showSuggestionsSheet = false
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        AsyncImage(
+                                            model = suggestion.imageUrl,
+                                            contentDescription = suggestion.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
                                         )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .align(Alignment.BottomCenter)
+                                                .background(Color.Black.copy(alpha = 0.75f))
+                                                .padding(6.dp)
+                                        ) {
+                                            Text(
+                                                text = suggestion.title,
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                             }

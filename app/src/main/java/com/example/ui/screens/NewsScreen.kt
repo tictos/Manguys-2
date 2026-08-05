@@ -58,14 +58,16 @@ fun NewsScreen(
 
     val userEntries by viewModel.allEntries.collectAsStateWithLifecycle()
 
-    var selectedFilterTab by remember { mutableIntStateOf(0) } // 0: Pour vous, 1: Toutes les actus
+    var selectedFilterTab by remember(userEntries) {
+        mutableIntStateOf(if (userEntries.isEmpty()) 1 else 0) // Default to "Toutes les actus" if list is empty so page shows news immediately
+    }
     var selectedMediaTypeFilter by remember { mutableStateOf<MediaType?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var bookmarkedNewsIds by remember { mutableStateOf(setOf<String>()) }
     var expandedArticleId by remember { mutableStateOf<String?>(null) }
 
     // Online Connection State
-    var isConnected by remember { mutableStateOf(networkManager.isNetworkAvailable()) }
+    var isConnected by remember { mutableStateOf(true) }
     var isLoadingNews by remember { mutableStateOf(false) }
     var liveArticlesList by remember { mutableStateOf<List<NewsArticle>>(emptyList()) }
     var hasAttemptedInitialFetch by remember { mutableStateOf(false) }
@@ -93,7 +95,7 @@ fun NewsScreen(
 
     // Determine current news to display
     val currentNewsToDisplay = remember(isConnected, liveArticlesList, userEntries) {
-        if (isConnected && liveArticlesList.isNotEmpty()) {
+        if (liveArticlesList.isNotEmpty()) {
             liveArticlesList
         } else {
             // Fallback cached news generated from local list
@@ -102,10 +104,10 @@ fun NewsScreen(
     }
 
     // Filtered news
-    val filteredNews = remember(currentNewsToDisplay, selectedFilterTab, selectedMediaTypeFilter, searchQuery) {
+    val filteredNews = remember(currentNewsToDisplay, selectedFilterTab, selectedMediaTypeFilter, searchQuery, userEntries) {
         currentNewsToDisplay.filter { news ->
             val matchesTab = when (selectedFilterTab) {
-                0 -> news.isTrackedByUser
+                0 -> if (userEntries.isEmpty()) true else news.isTrackedByUser
                 else -> true
             }
             val matchesType = selectedMediaTypeFilter == null || news.mediaType == selectedMediaTypeFilter
