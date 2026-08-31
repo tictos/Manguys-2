@@ -35,7 +35,9 @@ import com.example.ui.MediaViewModel
 import com.example.ui.theme.AppTheme
 import com.example.ui.theme.ThemePreferences
 import com.example.utils.CsvHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -61,16 +63,17 @@ fun SettingsScreen(
         contract = ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val csvContent = CsvHelper.exportToCsv(allEntries)
-                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    outputStream.write(csvContent.toByteArray())
-                }
-                scope.launch {
-                    snackbarHostState.showSnackbar("Export réussi (${allEntries.size} médias enregistrés dans le CSV)")
-                }
-            } catch (e: Exception) {
-                scope.launch {
+            scope.launch {
+                try {
+                    val count = allEntries.size
+                    withContext(Dispatchers.IO) {
+                        val csvContent = CsvHelper.exportToCsv(allEntries)
+                        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                            outputStream.write(csvContent.toByteArray())
+                        }
+                    }
+                    snackbarHostState.showSnackbar("Export réussi ($count médias enregistrés dans le CSV)")
+                } catch (e: Exception) {
                     snackbarHostState.showSnackbar("Erreur lors de l'exportation : ${e.localizedMessage}")
                 }
             }
@@ -82,21 +85,21 @@ fun SettingsScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val inputStream = context.contentResolver.openInputStream(uri)
-                val reader = BufferedReader(InputStreamReader(inputStream))
-                val csvText = reader.use { it.readText() }
-                val parsed = CsvHelper.parseCsv(csvText)
+            scope.launch {
+                try {
+                    val parsed = withContext(Dispatchers.IO) {
+                        val inputStream = context.contentResolver.openInputStream(uri)
+                        val reader = BufferedReader(InputStreamReader(inputStream))
+                        val csvText = reader.use { it.readText() }
+                        CsvHelper.parseCsv(csvText)
+                    }
 
-                if (parsed.isNotEmpty()) {
-                    pendingImportList = parsed
-                } else {
-                    scope.launch {
+                    if (parsed.isNotEmpty()) {
+                        pendingImportList = parsed
+                    } else {
                         snackbarHostState.showSnackbar("Aucun média valide trouvé dans le fichier CSV.")
                     }
-                }
-            } catch (e: Exception) {
-                scope.launch {
+                } catch (e: Exception) {
                     snackbarHostState.showSnackbar("Erreur de lecture du CSV : ${e.localizedMessage}")
                 }
             }

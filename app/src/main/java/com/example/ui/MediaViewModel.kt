@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.MediaEntry
 import com.example.data.MediaRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -26,15 +27,15 @@ class MediaViewModel(private val repository: MediaRepository) : ViewModel() {
         )
     }
 
-    fun insert(entry: MediaEntry) = viewModelScope.launch {
+    fun insert(entry: MediaEntry) = viewModelScope.launch(Dispatchers.IO) {
         repository.insert(entry)
     }
 
-    fun insertAll(entries: List<MediaEntry>) = viewModelScope.launch {
+    fun insertAll(entries: List<MediaEntry>) = viewModelScope.launch(Dispatchers.IO) {
         repository.insertAll(entries)
     }
 
-    fun deleteById(id: Int) = viewModelScope.launch {
+    fun deleteById(id: Int) = viewModelScope.launch(Dispatchers.IO) {
         repository.deleteById(id)
     }
 }
