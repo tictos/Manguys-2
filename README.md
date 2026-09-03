@@ -1,6 +1,45 @@
 # 📚 Manguys
 
+<!-- Emplacement pour l'image / bannière de présentation -->
+<p align="center">
+  <img src="docs/banner.png" alt="Manguys Banner" width="100%" />
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License Apache 2.0" /></a>
+  <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Android" />
+  <img src="https://img.shields.io/badge/Language-Kotlin-purple.svg" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/UI-Jetpack_Compose-blueviolet.svg" alt="Jetpack Compose" />
+</p>
+
 **Manguys** est une application Android moderne et intuitive conçue pour tous les passionnés de mangas, d'animés, de séries TV, de films et de bandes dessinées. Elle vous permet de suivre l'avancement de vos lectures et visionnages facilement, en conservant l'intégralité de vos données en local sur votre appareil.
+
+---
+
+## 💡 Genèse du Projet
+
+Ce projet est né d'un constat d'expérience en tant que grand fan de **Mangas et d'Animés japonais** :
+
+> Lorsque l'on suit plusieurs séries en cours de publication, certaines œuvres font régulièrement des pauses hebdomadaires, mensuelles ou des hiatus prolongés. À la reprise de la parution après plusieurs semaines ou mois, il devient vite très difficile de se souvenir **d'où l'on s'était arrêté** (quel chapitre, quel tome, quelle saison ou quel épisode précis).
+
+**Manguys** a été créée pour résoudre directement ce problème : offrir une application personnelle, fluide et 100% hors-ligne pour retrouver en un coup d'œil son avancée exacte et reprendre ses lectures et visionnages sans aucune perte de temps.
+
+---
+
+## 📸 Aperçus & Captures d'écran
+
+<!-- Emplacements pour vos captures d'écran (ajoutez vos images dans un dossier /docs/screenshots/ ou remplacez par vos URLs) -->
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Accueil & Liste" width="23%" />
+  <img src="docs/screenshots/add_media.png" alt="Ajout & Suggestion d'affiches" width="23%" />
+  <img src="docs/screenshots/stats.png" alt="Statistiques" width="23%" />
+  <img src="docs/screenshots/news.png" alt="Actualités" width="23%" />
+</p>
+
+| 🏠 Accueil & Bibliothèque | ➕ Ajout & Affiches Web | 📊 Statistiques & Suivi | 📰 Fil d'Actualités |
+| :---: | :---: | :---: | :---: |
+| *Affichage des médias et filtres* | *Recherche d'affiche par titre* | *Répartition et avancement* | *Flux pop-culture et sorties* |
 
 ---
 
@@ -103,4 +142,4 @@ Le projet est conçu selon les meilleures pratiques Android recommandées par Go
 
 ## 📄 Licence
 
-Ce projet est sous licence open-source. Consultez le fichier `LICENSE` pour plus de détails.
+Ce projet est distribué sous la licence **Apache 2.0**. Consultez le fichier [LICENSE](LICENSE) pour plus de détails.
