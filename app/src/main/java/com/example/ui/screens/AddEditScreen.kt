@@ -59,6 +59,8 @@ import com.example.data.MediaStatus
 import com.example.data.MediaType
 import com.example.ui.MediaViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -83,7 +85,9 @@ data class WebSearchResult(
 )
 
 class SearchNetworkTracker {
+    @Volatile
     var hasSuccess: Boolean = false
+    @Volatile
     var lastException: Exception? = null
 
     fun recordSuccess() {
@@ -93,15 +97,14 @@ class SearchNetworkTracker {
     fun recordException(e: Exception) {
         lastException = e
     }
-}
 
-fun isDeviceOnline(context: Context): Boolean {
-    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        ?: return true // Do not block if manager is unavailable
-    val activeNetwork = connectivityManager.activeNetwork ?: return false
-    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
-    // Do NOT check NET_CAPABILITY_VALIDATED because captive portal checks lag or fail on real cellular networks
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    fun isOfflineException(): Boolean {
+        val ex = lastException ?: return false
+        return ex is java.net.UnknownHostException ||
+                ex is java.net.ConnectException ||
+                (ex.cause is java.net.UnknownHostException) ||
+                (ex.cause is java.net.ConnectException)
+    }
 }
 
 private fun searchAniList(client: OkHttpClient, query: String, userAgent: String, tracker: SearchNetworkTracker? = null): List<WebImageSuggestion> {
@@ -122,8 +125,8 @@ private fun searchAniList(client: OkHttpClient, query: String, userAgent: String
             .build()
 
         client.newCall(request).execute().use { response ->
-            tracker?.recordSuccess()
             if (response.isSuccessful) {
+                tracker?.recordSuccess()
                 val bodyStr = response.body?.string() ?: return@use
                 val root = JSONObject(bodyStr)
                 val mediaArray = root.optJSONObject("data")
@@ -169,7 +172,7 @@ private fun searchKitsu(client: OkHttpClient, query: String, userAgent: String, 
 
         for (cat in categories) {
             try {
-                val url = "https://kitsu.io/api/edge/$cat?filter%5Btext%5D=$encoded&page%5Blimit%5D=6"
+                val url = "https://kitsu.io/api/edge/$cat?filter%5Btext%5D=$encoded&page%5Blimit%5D=8"
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", userAgent)
@@ -177,8 +180,8 @@ private fun searchKitsu(client: OkHttpClient, query: String, userAgent: String, 
                     .build()
 
                 client.newCall(request).execute().use { response ->
-                    tracker?.recordSuccess()
                     if (response.isSuccessful) {
+                        tracker?.recordSuccess()
                         val bodyStr = response.body?.string() ?: return@use
                         val root = JSONObject(bodyStr)
                         val dataArray = root.optJSONArray("data") ?: return@use
@@ -220,8 +223,8 @@ private fun searchTVMaze(client: OkHttpClient, query: String, userAgent: String,
             .build()
 
         client.newCall(request).execute().use { response ->
-            tracker?.recordSuccess()
             if (response.isSuccessful) {
+                tracker?.recordSuccess()
                 val bodyStr = response.body?.string() ?: return@use
                 val array = JSONArray(bodyStr)
                 for (i in 0 until array.length()) {
@@ -250,7 +253,7 @@ private fun searchWikipedia(client: OkHttpClient, query: String, userAgent: Stri
     for (lang in langs) {
         try {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val searchUrl = "https://$lang.wikipedia.org/w/api.php?action=opensearch&search=$encoded&limit=4&format=json"
+            val searchUrl = "https://$lang.wikipedia.org/w/api.php?action=opensearch&search=$encoded&limit=5&format=json"
             val searchReq = Request.Builder()
                 .url(searchUrl)
                 .header("User-Agent", userAgent)
@@ -258,8 +261,8 @@ private fun searchWikipedia(client: OkHttpClient, query: String, userAgent: Stri
 
             val titles = mutableListOf<String>()
             client.newCall(searchReq).execute().use { resp ->
-                tracker?.recordSuccess()
                 if (resp.isSuccessful) {
+                    tracker?.recordSuccess()
                     val body = resp.body?.string() ?: return@use
                     val array = JSONArray(body)
                     if (array.length() > 1) {
@@ -276,7 +279,7 @@ private fun searchWikipedia(client: OkHttpClient, query: String, userAgent: Stri
                 titles.add(0, query.trim())
             }
 
-            for (title in titles.take(3)) {
+            for (title in titles.take(4)) {
                 try {
                     val encTitle = URLEncoder.encode(title.replace(" ", "_"), "UTF-8")
                     val summaryUrl = "https://$lang.wikipedia.org/api/rest_v1/page/summary/$encTitle"
@@ -286,8 +289,8 @@ private fun searchWikipedia(client: OkHttpClient, query: String, userAgent: Stri
                         .build()
 
                     client.newCall(sumReq).execute().use { sumResp ->
-                        tracker?.recordSuccess()
                         if (sumResp.isSuccessful) {
+                            tracker?.recordSuccess()
                             val body = sumResp.body?.string() ?: return@use
                             val obj = JSONObject(body)
                             val pageTitle = obj.optString("title", title)
@@ -314,84 +317,65 @@ suspend fun fetchWebImageSuggestions(searchTitle: String, mediaType: MediaType, 
     val query = searchTitle.trim()
     if (query.isBlank()) return@withContext WebSearchResult(emptyList())
 
-    // 1. Check physical device network connectivity (without requiring NET_CAPABILITY_VALIDATED which causes false negatives on physical phones)
-    if (context != null && !isDeviceOnline(context)) {
-        return@withContext WebSearchResult(
-            suggestions = emptyList(),
-            errorMessage = "Aucune connexion internet. Une connexion internet est requise pour rechercher et suggérer des affiches en ligne.",
-            isOffline = true
-        )
-    }
-
     val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .followRedirects(true)
         .retryOnConnectionFailure(true)
         .build()
 
     val userAgent = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-    val results = mutableListOf<WebImageSuggestion>()
     val tracker = SearchNetworkTracker()
-    var errorMessage: String? = null
-    var isOffline = false
+    val results = mutableListOf<WebImageSuggestion>()
 
-    try {
+    // Run independent API calls in parallel via coroutineScope for speed and resilience against blocking
+    coroutineScope {
+        val anilistDef = async { searchAniList(client, query, userAgent, tracker) }
+        val kitsuDef = async { searchKitsu(client, query, userAgent, mediaType, tracker) }
+        val tvmazeDef = async { searchTVMaze(client, query, userAgent, tracker) }
+        val wikiDef = async { searchWikipedia(client, query, userAgent, mediaType, tracker) }
+
+        val anilistRes = try { anilistDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+        val kitsuRes = try { kitsuDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+        val tvmazeRes = try { tvmazeDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+        val wikiRes = try { wikiDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+
         when (mediaType) {
             MediaType.MANGAS, MediaType.ANIMES, MediaType.WEBTOONS -> {
-                // 1. AniList (best for Anime, Manga, Webtoons, Manhwas)
-                results.addAll(searchAniList(client, query, userAgent, tracker))
-                // 2. Kitsu as reinforcement
-                if (results.size < 4) {
-                    results.addAll(searchKitsu(client, query, userAgent, mediaType, tracker))
-                }
-                // 3. TVMaze / Wikipedia if still empty (adaptations, cartoons, live action)
-                if (results.isEmpty()) {
-                    results.addAll(searchTVMaze(client, query, userAgent, tracker))
-                    results.addAll(searchWikipedia(client, query, userAgent, mediaType, tracker))
-                }
+                results.addAll(anilistRes)
+                results.addAll(kitsuRes)
+                results.addAll(wikiRes)
+                results.addAll(tvmazeRes)
             }
             MediaType.SERIES -> {
-                // 1. TVMaze (comprehensive for TV shows & series)
-                results.addAll(searchTVMaze(client, query, userAgent, tracker))
-                // 2. Wikipedia for French & international series
-                if (results.size < 4) {
-                    results.addAll(searchWikipedia(client, query, userAgent, mediaType, tracker))
-                }
-                // 3. AniList for anime series
-                if (results.isEmpty()) {
-                    results.addAll(searchAniList(client, query, userAgent, tracker))
-                }
+                results.addAll(tvmazeRes)
+                results.addAll(wikiRes)
+                results.addAll(anilistRes)
+                results.addAll(kitsuRes)
             }
             MediaType.FILMS -> {
-                // 1. Wikipedia (films, movies posters)
-                results.addAll(searchWikipedia(client, query, userAgent, mediaType, tracker))
-                // 2. TVMaze (TV movies)
-                results.addAll(searchTVMaze(client, query, userAgent, tracker))
-                // 3. AniList (anime films like Ghibli, Shinkai, One Piece, Demon Slayer)
-                if (results.size < 4) {
-                    results.addAll(searchAniList(client, query, userAgent, tracker))
-                }
+                results.addAll(wikiRes)
+                results.addAll(tvmazeRes)
+                results.addAll(anilistRes)
+                results.addAll(kitsuRes)
             }
-        }
-    } catch (e: Exception) {
-        tracker.recordException(e)
-    }
-
-    // Evaluate results and network health
-    if (results.isEmpty()) {
-        if (!tracker.hasSuccess && tracker.lastException is java.net.UnknownHostException) {
-            isOffline = true
-            errorMessage = "Aucune connexion internet détectée. Veuillez vous connecter au réseau pour rechercher des affiches."
-        } else if (!tracker.hasSuccess && tracker.lastException is java.net.SocketTimeoutException) {
-            errorMessage = "Le délai de recherche a expiré. Vérifiez votre débit internet."
-        } else if (!tracker.hasSuccess && tracker.lastException != null) {
-            errorMessage = "Erreur de connexion : impossible de joindre les serveurs d'affiches."
         }
     }
 
     val distinctResults = results.distinctBy { it.imageUrl }
-    return@withContext WebSearchResult(distinctResults, errorMessage, isOffline)
+    var errorMessage: String? = null
+    var isOffline = false
+
+    if (distinctResults.isEmpty()) {
+        if (!tracker.hasSuccess && tracker.isOfflineException()) {
+            isOffline = true
+            errorMessage = "Aucune connexion internet détectée. Vérifiez votre Wi-Fi ou vos données mobiles."
+        } else if (!tracker.hasSuccess && tracker.lastException is java.net.SocketTimeoutException) {
+            errorMessage = "Le délai de recherche a expiré. Vérifiez votre débit internet."
+        }
+    }
+
+    WebSearchResult(distinctResults, errorMessage, isOffline)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -435,17 +419,20 @@ fun AddEditScreen(
 
     val isTitleEntered = title.trim().isNotBlank()
 
-    LaunchedEffect(showSuggestionsSheet, title, selectedType) {
-        if (showSuggestionsSheet && title.trim().isNotBlank()) {
-            dialogSearchQuery = title.trim()
-            isSearchingImages = true
-            searchErrorMessage = null
-            isSearchOffline = false
-            val result = fetchWebImageSuggestions(title.trim(), selectedType, context)
-            fetchedSuggestions = result.suggestions
-            searchErrorMessage = result.errorMessage
-            isSearchOffline = result.isOffline
-            isSearchingImages = false
+    LaunchedEffect(showSuggestionsSheet) {
+        if (showSuggestionsSheet) {
+            val queryToSearch = if (dialogSearchQuery.isNotBlank()) dialogSearchQuery.trim() else title.trim()
+            if (queryToSearch.isNotBlank()) {
+                dialogSearchQuery = queryToSearch
+                isSearchingImages = true
+                searchErrorMessage = null
+                isSearchOffline = false
+                val result = fetchWebImageSuggestions(queryToSearch, selectedType)
+                fetchedSuggestions = result.suggestions
+                searchErrorMessage = result.errorMessage
+                isSearchOffline = result.isOffline
+                isSearchingImages = false
+            }
         }
     }
 
@@ -608,12 +595,21 @@ fun AddEditScreen(
 
                 OutlinedButton(
                     onClick = {
-                        if (isTitleEntered) {
-                            dialogSearchQuery = title.trim()
-                            showSuggestionsSheet = true
+                        dialogSearchQuery = title.trim()
+                        showSuggestionsSheet = true
+                        if (title.trim().isNotBlank()) {
+                            coroutineScope.launch {
+                                isSearchingImages = true
+                                searchErrorMessage = null
+                                isSearchOffline = false
+                                val res = fetchWebImageSuggestions(title.trim(), selectedType)
+                                fetchedSuggestions = res.suggestions
+                                searchErrorMessage = res.errorMessage
+                                isSearchOffline = res.isOffline
+                                isSearchingImages = false
+                            }
                         }
                     },
-                    enabled = isTitleEntered,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(vertical = 8.dp, horizontal = 8.dp)
                 ) {
@@ -994,7 +990,7 @@ fun AddEditScreen(
                                             isSearchingImages = true
                                             searchErrorMessage = null
                                             isSearchOffline = false
-                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType, context)
+                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
                                             fetchedSuggestions = res.suggestions
                                             searchErrorMessage = res.errorMessage
                                             isSearchOffline = res.isOffline
@@ -1014,7 +1010,7 @@ fun AddEditScreen(
                                         isSearchingImages = true
                                         searchErrorMessage = null
                                         isSearchOffline = false
-                                        val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType, context)
+                                        val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
                                         fetchedSuggestions = res.suggestions
                                         searchErrorMessage = res.errorMessage
                                         isSearchOffline = res.isOffline
@@ -1065,7 +1061,7 @@ fun AddEditScreen(
                                             isSearchingImages = true
                                             searchErrorMessage = null
                                             isSearchOffline = false
-                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType, context)
+                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
                                             fetchedSuggestions = res.suggestions
                                             searchErrorMessage = res.errorMessage
                                             isSearchOffline = res.isOffline
@@ -1117,6 +1113,9 @@ fun AddEditScreen(
                                         .height(160.dp)
                                         .clickable {
                                             imageUrl = suggestion.imageUrl
+                                            if (title.isBlank()) {
+                                                title = suggestion.title
+                                            }
                                             showSuggestionsSheet = false
                                         },
                                     shape = RoundedCornerShape(12.dp),
@@ -1162,18 +1161,23 @@ fun AddEditScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                "Aucune image trouvée pour « ${dialogSearchQuery.trim()} ».",
+                                if (dialogSearchQuery.trim().isBlank())
+                                    "Entrez le titre d'une œuvre ci-dessus pour rechercher des affiches."
+                                else
+                                    "Aucune image trouvée pour « ${dialogSearchQuery.trim()} ».",
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                "Essayez avec le nom original ou tapez une autre recherche ci-dessus.",
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.outline
-                            )
+                            if (dialogSearchQuery.trim().isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Essayez avec le titre en anglais, japonais ou une variante.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    textAlign = TextAlign.Center,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
                         }
                     }
                 }
