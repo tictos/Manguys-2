@@ -2,7 +2,7 @@
 
 <!-- Emplacement pour l'image / bannière de présentation -->
 <p align="center">
-  <img src="docs/banner.png" alt="Manguys Banner" width="100%" />
+  <img src="docs/screenshots/banner.png" alt="Manguys Banner" width="100%" />
 </p>
 
 <p align="center">
