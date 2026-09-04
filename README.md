@@ -31,10 +31,10 @@ Ce projet est né d'un constat d'expérience en tant que grand fan de **Mangas e
 <!-- Emplacements pour vos captures d'écran (ajoutez vos images dans un dossier /docs/screenshots/ ou remplacez par vos URLs) -->
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="Accueil & Liste" width="23%" />
-  <img src="docs/screenshots/add_media.png" alt="Ajout & Suggestion d'affiches" width="23%" />
-  <img src="docs/screenshots/stats.png" alt="Statistiques" width="23%" />
-  <img src="docs/screenshots/news.png" alt="Actualités" width="23%" />
+  <img src="docs/screenshots/home.jpg" alt="Accueil & Liste" width="23%" />
+  <img src="docs/screenshots/add_media.jpg" alt="Ajout & Suggestion d'affiches" width="23%" />
+  <img src="docs/screenshots/stats.jpg" alt="Statistiques" width="23%" />
+  <img src="docs/screenshots/news.jpg" alt="Actualités" width="23%" />
 </p>
 
 | 🏠 Accueil & Bibliothèque | ➕ Ajout & Affiches Web | 📊 Statistiques & Suivi | 📰 Fil d'Actualités |
