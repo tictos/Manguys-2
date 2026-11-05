@@ -1190,52 +1190,59 @@ fun AddEditScreen(
         )
     }
 
-    // Modal Bottom Sheet / Dialog for Web Image Suggestions
+    // Modal Bottom Sheet for Web Image Suggestions (matching the user's requested layout)
     if (showSuggestionsSheet) {
-        AlertDialog(
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
             onDismissRequest = { showSuggestionsSheet = false },
-            title = {
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header with sparkle icon
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Affiches sur internet")
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        "Images suggérées du web",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-            },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Search bar inside the dialog to refine or retry easily
-                    OutlinedTextField(
-                        value = dialogSearchQuery,
-                        onValueChange = { dialogSearchQuery = it },
-                        label = { Text("Titre recherché") },
-                        placeholder = { Text("Ex: Naruto, Solo Leveling, Inception...") },
-                        singleLine = true,
-                        trailingIcon = {
-                            IconButton(
-                                onClick = {
-                                    if (dialogSearchQuery.trim().isNotBlank()) {
-                                        coroutineScope.launch {
-                                            isSearchingImages = true
-                                            searchErrorMessage = null
-                                            isSearchOffline = false
-                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
-                                            fetchedSuggestions = res.suggestions
-                                            searchErrorMessage = res.errorMessage
-                                            isSearchOffline = res.isOffline
-                                            isSearchingImages = false
-                                        }
-                                    }
-                                }
-                            ) {
-                                Icon(Icons.Filled.Search, contentDescription = "Rechercher")
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(
-                            onSearch = {
+
+                Text(
+                    text = if (dialogSearchQuery.isNotBlank())
+                        "Sélectionnez une affiche d'illustration pour votre média :"
+                    else
+                        "Recherchez une affiche pour votre œuvre :",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Search field inside the bottom sheet
+                OutlinedTextField(
+                    value = dialogSearchQuery,
+                    onValueChange = { dialogSearchQuery = it },
+                    label = { Text("Titre recherché") },
+                    placeholder = { Text("Ex: Naruto, Solo Leveling, One Piece...") },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (isSearchingImages) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            IconButton(onClick = {
                                 if (dialogSearchQuery.trim().isNotBlank()) {
                                     coroutineScope.launch {
                                         isSearchingImages = true
@@ -1248,187 +1255,218 @@ fun AddEditScreen(
                                         isSearchingImages = false
                                     }
                                 }
+                            }) {
+                                Icon(Icons.Filled.Search, contentDescription = "Rechercher")
                             }
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            if (dialogSearchQuery.trim().isNotBlank()) {
+                                coroutineScope.launch {
+                                    isSearchingImages = true
+                                    searchErrorMessage = null
+                                    isSearchOffline = false
+                                    val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
+                                    fetchedSuggestions = res.suggestions
+                                    searchErrorMessage = res.errorMessage
+                                    isSearchOffline = res.isOffline
+                                    isSearchingImages = false
+                                }
+                            }
+                        }
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
 
-                    // Error banner if network issue or offline
-                    if (searchErrorMessage != null) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
+                // Error banner if network issue or timeout
+                if (searchErrorMessage != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (isSearchOffline) Icons.Filled.WifiOff else Icons.Filled.Refresh,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(24.dp)
+                            Icon(
+                                imageVector = if (isSearchOffline) Icons.Filled.WifiOff else Icons.Filled.Refresh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isSearchOffline) "Pas de connexion internet" else "Erreur de chargement",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
                                 )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (isSearchOffline) "Pas de connexion internet" else "Erreur de chargement",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    Text(
-                                        text = searchErrorMessage ?: "Une connexion internet est nécessaire pour suggérer des affiches.",
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        fontSize = 12.sp,
-                                        lineHeight = 16.sp
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                TextButton(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            isSearchingImages = true
-                                            searchErrorMessage = null
-                                            isSearchOffline = false
-                                            val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
-                                            fetchedSuggestions = res.suggestions
-                                            searchErrorMessage = res.errorMessage
-                                            isSearchOffline = res.isOffline
-                                            isSearchingImages = false
-                                        }
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Réessayer", fontSize = 12.sp)
-                                }
+                                Text(
+                                    text = searchErrorMessage ?: "Une connexion internet est nécessaire pour suggérer des affiches.",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            TextButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isSearchingImages = true
+                                        searchErrorMessage = null
+                                        isSearchOffline = false
+                                        val res = fetchWebImageSuggestions(dialogSearchQuery.trim(), selectedType)
+                                        fetchedSuggestions = res.suggestions
+                                        searchErrorMessage = res.errorMessage
+                                        isSearchOffline = res.isOffline
+                                        isSearchingImages = false
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Réessayer", fontSize = 12.sp)
                             }
                         }
                     }
+                }
 
-                    if (isSearchingImages) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 28.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(36.dp))
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                "Recherche sur internet pour « ${dialogSearchQuery.trim()} »...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else if (fetchedSuggestions.isNotEmpty()) {
+                // Loading State
+                if (isSearchingImages) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Affiches trouvées en ligne (${fetchedSuggestions.size}) :",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "Recherche sur internet pour « ${dialogSearchQuery.trim()} »...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            contentPadding = PaddingValues(vertical = 8.dp)
-                        ) {
-                            items(fetchedSuggestions) { suggestion ->
-                                Card(
-                                    modifier = Modifier
-                                        .width(115.dp)
-                                        .height(160.dp)
-                                        .clickable {
-                                            imageUrl = suggestion.imageUrl
-                                            if (title.isBlank()) {
-                                                title = suggestion.title
-                                            }
-                                            showSuggestionsSheet = false
-                                        },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        SubcomposeAsyncImage(
-                                            model = ImageRequest.Builder(LocalContext.current)
-                                                .data(suggestion.imageUrl)
-                                                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-                                                .crossfade(true)
-                                                .build(),
-                                            contentDescription = suggestion.title,
-                                            contentScale = ContentScale.Crop,
-                                            loading = {
-                                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                                }
-                                            },
-                                            error = {
-                                                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-                                                    Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
-                                                }
-                                            },
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .align(Alignment.BottomCenter)
-                                                .background(Color.Black.copy(alpha = 0.75f))
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = suggestion.title,
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                    }
+                } else if (fetchedSuggestions.isNotEmpty()) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        items(fetchedSuggestions) { suggestion ->
+                            val isSelected = imageUrl == suggestion.imageUrl
+                            Card(
+                                modifier = Modifier
+                                    .width(125.dp)
+                                    .height(175.dp)
+                                    .clickable {
+                                        imageUrl = suggestion.imageUrl
+                                        if (title.isBlank()) {
+                                            title = suggestion.title
                                         }
+                                        showSuggestionsSheet = false
+                                    }
+                                    .then(
+                                        if (isSelected) Modifier.border(2.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                                        else Modifier
+                                    ),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    SubcomposeAsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(suggestion.imageUrl)
+                                            .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = suggestion.title,
+                                        contentScale = ContentScale.Crop,
+                                        loading = {
+                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                            }
+                                        },
+                                        error = {
+                                            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    if (isSelected) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            shape = CircleShape,
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(3.dp))
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .align(Alignment.BottomCenter)
+                                            .background(Color.Black.copy(alpha = 0.75f))
+                                            .padding(6.dp)
+                                    ) {
+                                        Text(
+                                            text = suggestion.title,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                 }
                             }
                         }
-                    } else if (searchErrorMessage == null) {
-                        // Empty results without error
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
+                    }
+                } else if (searchErrorMessage == null) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            if (dialogSearchQuery.trim().isBlank())
+                                "Entrez le nom d'une œuvre ci-dessus pour chercher des affiches."
+                            else
+                                "Aucune image trouvée pour « ${dialogSearchQuery.trim()} ».",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (dialogSearchQuery.trim().isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                if (dialogSearchQuery.trim().isBlank())
-                                    "Entrez le titre d'une œuvre ci-dessus pour rechercher des affiches."
-                                else
-                                    "Aucune image trouvée pour « ${dialogSearchQuery.trim()} ».",
-                                style = MaterialTheme.typography.bodyMedium,
+                                "Vérifiez l'orthographe ou essayez le titre en anglais / japonais.",
+                                style = MaterialTheme.typography.bodySmall,
                                 textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.outline
                             )
-                            if (dialogSearchQuery.trim().isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    "Essayez avec le titre en anglais, japonais ou une variante.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSuggestionsSheet = false }) {
-                    Text("Fermer")
+
+                // Bottom row with "Fermer" button aligned to the right (like in the screenshot)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { showSuggestionsSheet = false }) {
+                        Text("Fermer", style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
-        )
+        }
     }
 }
 
