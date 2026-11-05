@@ -56,7 +56,7 @@ Ce projet est né d'un constat d'expérience en tant que grand fan de **Mangas e
 * Graphiques de répartition par catégorie, statut et niveau de complétion.
 * Indicateurs clés sur le nombre total d'œuvres suivies et complétées.
 
-### 📰 Actualités Otaku & Pop Culture
+### 📰 Actualités Mangas & Pop Culture
 * Fil d'actualités intégré pour vous tenir informé des dernières nouveautés, sorties de chapitres et annonces d'animés.
 
 ### 🔒 Stockage Hors-Ligne & Confidentialité

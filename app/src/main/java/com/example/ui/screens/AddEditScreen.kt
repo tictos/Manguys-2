@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.example.data.MediaEntry
 import com.example.data.MediaStatus
@@ -60,9 +61,11 @@ import com.example.data.MediaType
 import com.example.ui.MediaViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -313,13 +316,99 @@ private fun searchWikipedia(client: OkHttpClient, query: String, userAgent: Stri
     return results
 }
 
+private fun searchMangaDex(client: OkHttpClient, query: String, userAgent: String, tracker: SearchNetworkTracker? = null): List<WebImageSuggestion> {
+    val results = mutableListOf<WebImageSuggestion>()
+    try {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        val url = "https://api.mangadex.org/manga?title=$encoded&limit=6&includes[]=cover_art"
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Accept", "application/json")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                tracker?.recordSuccess()
+                val bodyStr = response.body?.string() ?: return@use
+                val root = JSONObject(bodyStr)
+                val dataArray = root.optJSONArray("data") ?: return@use
+                for (i in 0 until dataArray.length()) {
+                    val item = dataArray.getJSONObject(i)
+                    val mangaId = item.optString("id")
+                    val attrs = item.optJSONObject("attributes") ?: continue
+                    val titleObj = attrs.optJSONObject("title")
+                    val titleName = titleObj?.keys()?.asSequence()?.firstOrNull()?.let { titleObj.optString(it) }
+                        ?.takeIf { it.isNotBlank() } ?: query
+
+                    var coverFileName = ""
+                    val rels = item.optJSONArray("relationships")
+                    if (rels != null) {
+                        for (j in 0 until rels.length()) {
+                            val r = rels.getJSONObject(j)
+                            if (r.optString("type") == "cover_art") {
+                                coverFileName = r.optJSONObject("attributes")?.optString("fileName", "") ?: ""
+                                if (coverFileName.isNotBlank()) break
+                            }
+                        }
+                    }
+
+                    if (coverFileName.isNotBlank()) {
+                        val imgUrl = "https://uploads.mangadex.org/covers/$mangaId/$coverFileName.512.jpg"
+                        results.add(WebImageSuggestion(titleName, imgUrl, MediaType.MANGAS))
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        tracker?.recordException(e)
+    }
+    return results
+}
+
+private fun searchITunes(client: OkHttpClient, query: String, userAgent: String, mediaType: MediaType, tracker: SearchNetworkTracker? = null): List<WebImageSuggestion> {
+    val results = mutableListOf<WebImageSuggestion>()
+    try {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        val url = "https://itunes.apple.com/search?term=$encoded&limit=8"
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Accept", "application/json")
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                tracker?.recordSuccess()
+                val bodyStr = response.body?.string() ?: return@use
+                val root = JSONObject(bodyStr)
+                val array = root.optJSONArray("results") ?: return@use
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    val name = item.optString("trackName").takeIf { it.isNotBlank() }
+                        ?: item.optString("collectionName").takeIf { it.isNotBlank() }
+                        ?: query
+                    val artwork100 = item.optString("artworkUrl100", "")
+                    if (artwork100.isNotBlank()) {
+                        val highResArt = artwork100.replace("100x100bb", "600x600bb")
+                        results.add(WebImageSuggestion(name, highResArt, mediaType))
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        tracker?.recordException(e)
+    }
+    return results
+}
+
 suspend fun fetchWebImageSuggestions(searchTitle: String, mediaType: MediaType, context: Context? = null): WebSearchResult = withContext(Dispatchers.IO) {
     val query = searchTitle.trim()
     if (query.isBlank()) return@withContext WebSearchResult(emptyList())
 
     val client = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .followRedirects(true)
         .retryOnConnectionFailure(true)
         .build()
@@ -328,32 +417,48 @@ suspend fun fetchWebImageSuggestions(searchTitle: String, mediaType: MediaType, 
     val tracker = SearchNetworkTracker()
     val results = mutableListOf<WebImageSuggestion>()
 
-    // Run independent API calls in parallel via coroutineScope for speed and resilience against blocking
-    coroutineScope {
-        val anilistDef = async { searchAniList(client, query, userAgent, tracker) }
-        val kitsuDef = async { searchKitsu(client, query, userAgent, mediaType, tracker) }
-        val tvmazeDef = async { searchTVMaze(client, query, userAgent, tracker) }
-        val wikiDef = async { searchWikipedia(client, query, userAgent, mediaType, tracker) }
+    // Run independent API calls in parallel via supervisorScope so failure of one does not cancel others
+    supervisorScope {
+        val anilistDef = async { withTimeoutOrNull(6000L) { searchAniList(client, query, userAgent, tracker) } ?: emptyList() }
+        val mangadexDef = async { withTimeoutOrNull(6000L) { searchMangaDex(client, query, userAgent, tracker) } ?: emptyList() }
+        val kitsuDef = async { withTimeoutOrNull(6000L) { searchKitsu(client, query, userAgent, mediaType, tracker) } ?: emptyList() }
+        val itunesDef = async { withTimeoutOrNull(6000L) { searchITunes(client, query, userAgent, mediaType, tracker) } ?: emptyList() }
+        val tvmazeDef = async { withTimeoutOrNull(6000L) { searchTVMaze(client, query, userAgent, tracker) } ?: emptyList() }
+        val wikiDef = async { withTimeoutOrNull(6000L) { searchWikipedia(client, query, userAgent, mediaType, tracker) } ?: emptyList() }
 
         val anilistRes = try { anilistDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+        val mangadexRes = try { mangadexDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
         val kitsuRes = try { kitsuDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
+        val itunesRes = try { itunesDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
         val tvmazeRes = try { tvmazeDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
         val wikiRes = try { wikiDef.await() } catch (e: Exception) { tracker.recordException(e); emptyList() }
 
         when (mediaType) {
-            MediaType.MANGAS, MediaType.ANIMES, MediaType.WEBTOONS -> {
+            MediaType.MANGAS, MediaType.WEBTOONS -> {
                 results.addAll(anilistRes)
+                results.addAll(mangadexRes)
+                results.addAll(kitsuRes)
+                results.addAll(itunesRes)
+                results.addAll(wikiRes)
+                results.addAll(tvmazeRes)
+            }
+            MediaType.ANIMES -> {
+                results.addAll(anilistRes)
+                results.addAll(itunesRes)
                 results.addAll(kitsuRes)
                 results.addAll(wikiRes)
+                results.addAll(mangadexRes)
                 results.addAll(tvmazeRes)
             }
             MediaType.SERIES -> {
                 results.addAll(tvmazeRes)
+                results.addAll(itunesRes)
                 results.addAll(wikiRes)
                 results.addAll(anilistRes)
                 results.addAll(kitsuRes)
             }
             MediaType.FILMS -> {
+                results.addAll(itunesRes)
                 results.addAll(wikiRes)
                 results.addAll(tvmazeRes)
                 results.addAll(anilistRes)
@@ -417,13 +522,30 @@ fun AddEditScreen(
     var dialogSearchQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
 
-    val isTitleEntered = title.trim().isNotBlank()
+    var autoSuggestions by remember { mutableStateOf<List<WebImageSuggestion>>(emptyList()) }
+    var isAutoSearching by remember { mutableStateOf(false) }
 
-    LaunchedEffect(showSuggestionsSheet) {
+    // Automatic background suggestions when title changes
+    LaunchedEffect(title, selectedType) {
+        val trimmed = title.trim()
+        if (trimmed.length >= 2) {
+            delay(500)
+            isAutoSearching = true
+            val res = fetchWebImageSuggestions(trimmed, selectedType)
+            autoSuggestions = res.suggestions
+            isAutoSearching = false
+        } else {
+            autoSuggestions = emptyList()
+            isAutoSearching = false
+        }
+    }
+
+    // Debounced search inside the dialog
+    LaunchedEffect(dialogSearchQuery, showSuggestionsSheet) {
         if (showSuggestionsSheet) {
-            val queryToSearch = if (dialogSearchQuery.isNotBlank()) dialogSearchQuery.trim() else title.trim()
-            if (queryToSearch.isNotBlank()) {
-                dialogSearchQuery = queryToSearch
+            val queryToSearch = dialogSearchQuery.trim().ifBlank { title.trim() }
+            if (queryToSearch.length >= 2) {
+                delay(350)
                 isSearchingImages = true
                 searchErrorMessage = null
                 isSearchOffline = false
@@ -498,7 +620,7 @@ fun AddEditScreen(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (!imageUrl.isNullOrBlank()) {
-                        AsyncImage(
+                        SubcomposeAsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(imageUrl)
                                 .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
@@ -506,6 +628,20 @@ fun AddEditScreen(
                                 .build(),
                             contentDescription = title,
                             contentScale = ContentScale.Crop,
+                            loading = {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
+                                }
+                            },
+                            error = {
+                                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(32.dp))
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Image indisponible", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
 
@@ -597,18 +733,6 @@ fun AddEditScreen(
                     onClick = {
                         dialogSearchQuery = title.trim()
                         showSuggestionsSheet = true
-                        if (title.trim().isNotBlank()) {
-                            coroutineScope.launch {
-                                isSearchingImages = true
-                                searchErrorMessage = null
-                                isSearchOffline = false
-                                val res = fetchWebImageSuggestions(title.trim(), selectedType)
-                                fetchedSuggestions = res.suggestions
-                                searchErrorMessage = res.errorMessage
-                                isSearchOffline = res.isOffline
-                                isSearchingImages = false
-                            }
-                        }
                     },
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(vertical = 8.dp, horizontal = 8.dp)
@@ -637,6 +761,113 @@ fun AddEditScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+
+            // Automatic live poster suggestions shelf
+            if (isAutoSearching || autoSuggestions.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Filled.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                "Affiches suggérées pour « ${title.trim()} »",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (isAutoSearching) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                            }
+                        }
+
+                        if (autoSuggestions.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                contentPadding = PaddingValues(vertical = 4.dp)
+                            ) {
+                                items(autoSuggestions) { suggestion ->
+                                    val isSelected = imageUrl == suggestion.imageUrl
+                                    Card(
+                                        modifier = Modifier
+                                            .width(95.dp)
+                                            .height(135.dp)
+                                            .clickable {
+                                                imageUrl = suggestion.imageUrl
+                                            }
+                                            .then(
+                                                if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
+                                                else Modifier
+                                            ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Box(modifier = Modifier.fillMaxSize()) {
+                                            SubcomposeAsyncImage(
+                                                model = ImageRequest.Builder(LocalContext.current)
+                                                    .data(suggestion.imageUrl)
+                                                    .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                                                    .crossfade(true)
+                                                    .build(),
+                                                contentDescription = suggestion.title,
+                                                contentScale = ContentScale.Crop,
+                                                loading = {
+                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                                    }
+                                                },
+                                                error = {
+                                                    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                                                        Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                                                    }
+                                                },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                            if (isSelected) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(20.dp)
+                                                ) {
+                                                    Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(2.dp))
+                                                }
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .align(Alignment.BottomCenter)
+                                                    .background(Color.Black.copy(alpha = 0.7f))
+                                                    .padding(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = suggestion.title,
+                                                    color = Color.White,
+                                                    fontSize = 9.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // Dropdown for Media Type
             ExposedDropdownMenuBox(
@@ -1122,7 +1353,7 @@ fun AddEditScreen(
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize()) {
-                                        AsyncImage(
+                                        SubcomposeAsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
                                                 .data(suggestion.imageUrl)
                                                 .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
@@ -1130,6 +1361,16 @@ fun AddEditScreen(
                                                 .build(),
                                             contentDescription = suggestion.title,
                                             contentScale = ContentScale.Crop,
+                                            loading = {
+                                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                                }
+                                            },
+                                            error = {
+                                                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Filled.Image, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                                                }
+                                            },
                                             modifier = Modifier.fillMaxSize()
                                         )
                                         Box(
